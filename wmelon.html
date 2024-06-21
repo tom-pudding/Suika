@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>スイカゲーム風</title>
+    <style>
+        canvas { border: 1px solid black; touch-action: none; }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.18.0/matter.min.js"></script>
+</head>
+<body>
+    <canvas id="gameCanvas" width="300" height="400"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        const Engine = Matter.Engine,
+              World = Matter.World,
+              Bodies = Matter.Bodies,
+              Body = Matter.Body,
+              Events = Matter.Events;
+
+        const engine = Engine.create();
+        const world = engine.world;
+        world.gravity.y = 0.5;
+
+        const fruitTypes = [
+            { name: 'Cherry', size: 15, color: '#FF0000' },
+            { name: 'Strawberry', size: 20, color: '#FF3366' },
+            { name: 'Grape', size: 25, color: '#9932CC' },
+            { name: 'Orange', size: 30, color: '#FFA500' },
+            { name: 'Peach', size: 35, color: '#FFDAB9' },
+            { name: 'Apple', size: 40, color: '#008000' },
+            { name: 'Pear', size: 45, color: '#90EE90' },
+            { name: 'Pineapple', size: 50, color: '#FFFF00' },
+            { name: 'Melon', size: 55, color: '#32CD32' },
+            { name: 'Watermelon', size: 60, color: '#006400' }
+        ];
+
+        const NEXT_FRUIT_X = canvas.width - 30;
+        const NEXT_FRUIT_Y = 30;
+        const GAME_OVER_LINE = 80;
+
+        let currentFruit = null;
+        let nextFruitType = Math.floor(Math.random() * 5);
+        let gameOver = false;
+        let isMouseDown = false;
+        let dropTimeout = null;
+        let gameOverTimer = null;
+
+        const wallOptions = { isStatic: true, restitution: 0.1 };
+        World.add(world, [
+            Bodies.rectangle(150, 400, 300, 10, wallOptions),
+            Bodies.rectangle(-5, 200, 10, 400, wallOptions),
+            Bodies.rectangle(305, 200, 10, 400, wallOptions)
+        ]);
+
+        function createFruit(x, y, type, isStatic = false) {
+            const fruit = fruitTypes[type];
+            return Bodies.circle(x, y, fruit.size, {
+                restitution: 0.3,
+                friction: 0.1,
+                frictionAir: 0.001,
+                density: 0.001 * (type + 1),
+                fruitType: type,
+                isStatic: isStatic
+            });
+        }
+
+        function checkGameOver() {
+            let fruitsAboveLine = world.bodies.some(body => 
+                body.fruitType !== undefined && 
+                !body.isStatic &&
+                body.position.y - fruitTypes[body.fruitType].size < GAME_OVER_LINE
+            );
+
+            if (fruitsAboveLine) {
+                if (gameOverTimer === null) {
+                    gameOverTimer = setTimeout(() => {
+                        gameOver = true;
+                        alert("Game Over!");
+                    }, 3000);
+                }
+            } else {
+                if (gameOverTimer !== null) {
+                    clearTimeout(gameOverTimer);
+                    gameOverTimer = null;
+                }
+            }
+        }
+
+        function update() {
+            if (gameOver) return;
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            if (!currentFruit) {
+                const centerX = canvas.width / 2;
+                currentFruit = createFruit(centerX, 30, nextFruitType, true);
+                World.add(world, currentFruit);
+            }
+
+            Engine.update(engine, 16.67);
+
+            // ゲームオーバーラインを描画
+            ctx.strokeStyle = 'rgba(255, 0, 0, 0.5)';
+            ctx.lineWidth = 3;
+            ctx.setLineDash([5, 5]);
+            ctx.beginPath();
+            ctx.moveTo(0, GAME_OVER_LINE);
+            ctx.lineTo(canvas.width, GAME_OVER_LINE);
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            // 待機フルーツを先に描画
+            ctx.fillStyle = fruitTypes[nextFruitType].color;
+            ctx.beginPath();
+            ctx.arc(NEXT_FRUIT_X, NEXT_FRUIT_Y, fruitTypes[nextFruitType].size, 0, Math.PI * 2);
+            ctx.fill();
+
+            // その後、ゲーム内のフルーツを描画
+            world.bodies.forEach(body => {
+                if (body.fruitType !== undefined) {
+                    const fruit = fruitTypes[body.fruitType];
+                    ctx.fillStyle = fruit.color;
+                    ctx.beginPath();
+                    ctx.arc(body.position.x, body.position.y, fruit.size, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            });
+
+            checkGameOver();
+
+            requestAnimationFrame(update);
+        }
+
+        Events.on(engine, 'collisionStart', (event) => {
+            event.pairs.forEach((pair) => {
+                const bodyA = pair.bodyA;
+                const bodyB = pair.bodyB;
+                if (bodyA.fruitType !== undefined && bodyB.fruitType !== undefined) {
+                    if (bodyA.fruitType === bodyB.fruitType && 
+                        bodyA.fruitType < fruitTypes.length - 1) {
+                        const newType = bodyA.fruitType + 1;
+                        const newX = (bodyA.position.x + bodyB.position.x) / 2;
+                        const newY = (bodyA.position.y + bodyB.position.y) / 2;
+                        const newFruit = createFruit(newX, newY, newType);
+
+                        World.remove(world, [bodyA, bodyB]);
+                        World.add(world, newFruit);
+                    }
+                }
+            });
+        });
+
+        function handlePointerStart(e) {
+            e.preventDefault();
+            isMouseDown = true;
+            handlePointerMove(e);
+        }
+
+        function handlePointerMove(e) {
+            if (currentFruit && currentFruit.isStatic && (isMouseDown || e.type === 'touchmove')) {
+                const rect = canvas.getBoundingClientRect();
+                const clientX = e.clientX || (e.touches && e.touches[0].clientX);
+                if (clientX) {
+                    const newX = clientX - rect.left;
+                    Body.setPosition(currentFruit, { 
+                        x: Math.max(fruitTypes[currentFruit.fruitType].size, Math.min(newX, canvas.width - fruitTypes[currentFruit.fruitType].size)),
+                        y: currentFruit.position.y
+                    });
+                }
+            }
+        }
+
+ function handlePointerEnd(e) {
+    e.preventDefault();
+    if (currentFruit && currentFruit.isStatic) {
+        Body.setStatic(currentFruit, false);
+        
+        dropTimeout = setTimeout(() => {
+            const centerX = canvas.width / 2;
+            const newCurrentFruit = createFruit(centerX, 30, nextFruitType, true);
+            World.add(world, newCurrentFruit);
+            currentFruit = newCurrentFruit;
+            nextFruitType = Math.floor(Math.random() * 5);
+        }, 500);
+    }
+    isMouseDown = false;
+}
+
+canvas.addEventListener('mousedown', handlePointerStart);
+canvas.addEventListener('mousemove', handlePointerMove);
+canvas.addEventListener('mouseup', handlePointerEnd);
+canvas.addEventListener('touchstart', handlePointerStart);
+canvas.addEventListener('touchmove', handlePointerMove);
+canvas.addEventListener('touchend', handlePointerEnd);
+
+update();
+    </script>
+</body>
+</html>
